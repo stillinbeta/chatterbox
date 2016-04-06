@@ -7,11 +7,13 @@
 -export([
          format/1,
          read_binary/2,
+         send/1,
          send/2,
          ack/0,
          ack/1,
          to_binary/1,
-         overlay/2
+         overlay/2,
+         validate/1
         ]).
 
 -spec format(settings()|binary()|{settings, [proplists:property()]}) -> iodata().
@@ -95,6 +97,14 @@ overlay(S, {settings, [{?SETTINGS_MAX_HEADER_LIST_SIZE, Val}|PList]}) ->
 overlay(S, {settings, []}) ->
     S.
 
+-spec send(settings()) -> binary().
+send(Settings) ->
+    List = http2_settings:to_proplist(Settings),
+    Payload = make_payload(List),
+    L = size(Payload),
+    Header = <<L:24,?SETTINGS:8,16#0:8,0:1,0:31>>,
+    <<Header/binary, Payload/binary>>.
+
 -spec send(settings(), settings()) -> binary().
 send(PrevSettings, NewSettings) ->
     Diff = http2_settings:diff(PrevSettings, NewSettings),
@@ -109,6 +119,8 @@ make_payload(Diff) ->
 
 make_payload_([], BinAcc) ->
     BinAcc;
+make_payload_([{_, unlimited}|Tail], BinAcc) ->
+    make_payload_(Tail, BinAcc);
 make_payload_([{<<Setting>>, Value}|Tail], BinAcc) ->
     make_payload_(Tail, <<Setting:16,Value:32,BinAcc/binary>>).
 
@@ -150,6 +162,27 @@ to_binary(?SETTINGS_MAX_HEADER_LIST_SIZE, #settings{max_header_list_size=undefin
 to_binary(?SETTINGS_MAX_HEADER_LIST_SIZE, #settings{max_header_list_size=MHLS}) ->
     <<16#6:16,MHLS:32>>.
 
+
+-spec validate({settings, [proplists:property()]}) -> ok | {error, integer()}.
+validate({settings, PList}) ->
+    validate_(PList).
+
+validate_([]) ->
+    ok;
+validate_([{?SETTINGS_ENABLE_PUSH, Push}|_T])
+  when Push > 1; Push < 0 ->
+    {error, ?PROTOCOL_ERROR};
+validate_([{?SETTINGS_INITIAL_WINDOW_SIZE, Size}|_T])
+  when Size >=2147483648 ->
+    {error, ?FLOW_CONTROL_ERROR};
+validate_([{?SETTINGS_MAX_FRAME_SIZE, Size}|_T])
+  when Size < 16384; Size > 16777215 ->
+    {error, ?PROTOCOL_ERROR};
+validate_([_H|T]) ->
+    validate_(T).
+
+
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 
@@ -162,6 +195,23 @@ make_payload_test() ->
     <<MCSIndex>> = ?SETTINGS_MAX_CONCURRENT_STREAMS,
     <<MFSIndex>> = ?SETTINGS_MAX_FRAME_SIZE,
     ?assertEqual(<<MCSIndex:16,2:32,MFSIndex:16,2048:32>>, Bin),
+    ok.
+
+validate_test() ->
+    ?assertEqual(ok, validate_([])),
+    ?assertEqual(ok, validate_([{?SETTINGS_ENABLE_PUSH, 0}])),
+    ?assertEqual(ok, validate_([{?SETTINGS_ENABLE_PUSH, 1}])),
+    ?assertEqual({error, ?PROTOCOL_ERROR}, validate_([{?SETTINGS_ENABLE_PUSH, 2}])),
+    ?assertEqual({error, ?PROTOCOL_ERROR}, validate_([{?SETTINGS_ENABLE_PUSH, -1}])),
+    ?assertEqual({error, ?FLOW_CONTROL_ERROR}, validate_([{?SETTINGS_INITIAL_WINDOW_SIZE, 2147483648}])),
+    ?assertEqual(ok, validate_([{?SETTINGS_INITIAL_WINDOW_SIZE, 2147483647}])),
+
+    ?assertEqual({error, ?PROTOCOL_ERROR}, validate_([{?SETTINGS_MAX_FRAME_SIZE, 16383}])),
+    ?assertEqual(ok, validate_([{?SETTINGS_MAX_FRAME_SIZE, 16384}])),
+
+    ?assertEqual(ok, validate_([{?SETTINGS_MAX_FRAME_SIZE, 16777215}])),
+    ?assertEqual({error, ?PROTOCOL_ERROR}, validate_([{?SETTINGS_MAX_FRAME_SIZE, 16777216}])),
+
     ok.
 
 -endif.

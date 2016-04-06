@@ -18,33 +18,39 @@ format(Payload) ->
     io_lib:format("[Headers: ~p]", [Payload]).
 
 -spec read_binary(binary(), frame_header()) ->
-    {ok, payload(), binary()} | {error, term()}.
+                         {ok, payload(), binary()}
+                       | {error, error_code()}.
 read_binary(Bin, H = #frame_header{length=L}) ->
     <<PayloadBin:L/binary,Rem/bits>> = Bin,
-    Data = http2_padding:read_possibly_padded_payload(PayloadBin, H),
-    {Priority, HeaderFragment} = case is_priority(H) of
-        true ->
-            http2_frame_priority:read_priority(Data);
-        false ->
-            {undefined, Data}
-    end,
+    case http2_padding:read_possibly_padded_payload(PayloadBin, H) of
+        {error, Code} ->
+            {error, Code};
+        Data ->
+            {Priority, HeaderFragment} =
+                case is_priority(H) of
+                    true ->
+                        http2_frame_priority:read_priority(Data);
+                    false ->
+                        {undefined, Data}
+                end,
 
-    Payload = #headers{
-                 priority=Priority,
-                 block_fragment=HeaderFragment
-                },
-    {ok, Payload, Rem}.
+            Payload = #headers{
+                         priority=Priority,
+                         block_fragment=HeaderFragment
+                        },
+            {ok, Payload, Rem}
+    end.
 
 is_priority(#frame_header{flags=F}) when ?IS_FLAG(F, ?FLAG_PRIORITY) ->
     true;
 is_priority(_) ->
     false.
 
--spec to_frame(pos_integer(), hpack:headers(), hpack:encode_context()) ->
-                      {{frame_header(), headers()}, hpack:encode_context()}.
+-spec to_frame(pos_integer(), hpack:headers(), hpack:context()) ->
+                      {{frame_header(), headers()}, hpack:context()}.
 %% Maybe break this up into continuations like the data frame
 to_frame(StreamId, Headers, EncodeContext) ->
-    {HeadersToSend, NewContext} = hpack:encode(Headers, EncodeContext),
+    {ok, {HeadersToSend, NewContext}} = hpack:encode(Headers, EncodeContext),
     L = byte_size(HeadersToSend),
     {{#frame_header{
          length=L,
@@ -55,7 +61,6 @@ to_frame(StreamId, Headers, EncodeContext) ->
       #headers{
          block_fragment=HeadersToSend
         }},
-    %%{[<<L:24,?HEADERS:8,?FLAG_END_HEADERS:8,0:1,StreamId:31>>,HeadersToSend],
     NewContext}.
 
 send({Transport, Socket}, StreamId, Headers, EncodeContext) ->

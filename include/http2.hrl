@@ -19,7 +19,8 @@
                     | ?PING
                     | ?GOAWAY
                     | ?WINDOW_UPDATE
-                    | ?CONTINUATION.
+                    | ?CONTINUATION
+                    | integer(). %% boo!
 
 -define(FT, fun(?DATA) -> "DATA";
                (?HEADERS) -> "HEADERS";
@@ -30,7 +31,8 @@
                (?PING) -> "PING";
                (?GOAWAY) -> "GOAWAY";
                (?WINDOW_UPDATE) -> "WINDOW_UPDATE";
-               (?CONTINUATION) -> "CONTINUATION" end
+               (?CONTINUATION) -> "CONTINUATION";
+               (_) -> "UNSUPPORTED EXPANSION type" end
   ).
 
 %% ERROR CODES
@@ -92,7 +94,7 @@
 -type frame_header() :: #frame_header{}.
 
 -record(data, {
-    data :: binary()
+    data :: iodata()
   }).
 -type data() :: #data{}.
 
@@ -103,9 +105,9 @@
 -type headers() :: #headers{}.
 
 -record(priority, {
-    exclusive :: 0 | 1,
-    stream_id :: stream_id(),
-    weight :: pos_integer()
+    exclusive = 0 :: 0 | 1,
+    stream_id = 0 :: stream_id(),
+    weight = 0 :: non_neg_integer()
   }).
 -type priority() :: #priority{}.
 
@@ -181,7 +183,8 @@
                  | ping()
                  | goaway()
                  | window_update()
-                 | continuation().
+                 | continuation()
+                 | binary().
 
 -type frame() :: {frame_header(), payload()}.
 
@@ -192,55 +195,3 @@
 -define(PREFACE, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n").
 
 -define(DEFAULT_INITIAL_WINDOW_SIZE, 65535).
-
-
--record(connection_state, {
-          type = undefined :: client | server | undefined,
-          ssl_options = [],
-          listen_ref :: non_neg_integer(),
-          socket = undefined :: undefined | pid() | socket(),
-          send_settings = #settings{} :: settings(),
-          recv_settings = #settings{} :: settings(),
-          send_window_size = ?DEFAULT_INITIAL_WINDOW_SIZE :: integer(),
-          recv_window_size = ?DEFAULT_INITIAL_WINDOW_SIZE :: integer(),
-          decode_context = hpack:new_decode_context() :: hpack:decode_context(),
-          encode_context = hpack:new_encode_context() :: hpack:encode_context(),
-          settings_sent = queue:new() :: queue:queue(),
-          next_available_stream_id = 2 :: stream_id(),
-          streams = [] :: [{stream_id(), stream_state()}],
-          continuation_stream_id = undefined :: stream_id() | undefined,
-          content_handler = application:get_env(chatterbox, content_handler, chatterbox_static_content_handler) :: module(),
-          buffer = empty :: empty | {binary, binary()} | {frame, frame_header(), binary()}
-}).
-
--type connection_state() :: #connection_state{}.
-
--type stream_state_name() :: 'idle'
-                           | 'open'
-                           | 'closed'
-                           | 'reserved_local'
-                           | 'reserved_remote'
-                           | 'half_closed_local'
-                           | 'half_closed_remote'.
-
--record(stream_state, {
-          stream_id = undefined :: stream_id(),
-          state = idle :: stream_state_name(),
-          send_window_size = ?DEFAULT_INITIAL_WINDOW_SIZE :: integer(),
-          recv_window_size = ?DEFAULT_INITIAL_WINDOW_SIZE :: integer(),
-          queued_frames = queue:new() :: queue:queue(frame()),
-          incoming_frames = queue:new() :: queue:queue(frame()),
-          request_headers = [] :: hpack:headers(),
-          request_body :: iodata(),
-          request_end_stream = false :: boolean(),
-          request_end_headers = false :: boolean(),
-          response_headers = [] :: hpack:headers(),
-          response_body :: iodata(),
-          response_end_headers = false :: boolean(),
-          response_end_stream = false :: boolean(),
-          next_state = undefined :: undefined | stream_state_name(),
-          promised_stream = undefined :: undefined |  stream_state(),
-          notify_pid = undefined :: undefined | pid()
-}).
-
--type stream_state() :: #stream_state{}.

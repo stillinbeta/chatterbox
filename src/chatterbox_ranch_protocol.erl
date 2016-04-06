@@ -1,6 +1,9 @@
 -module(chatterbox_ranch_protocol).
 
--include("http2_socket.hrl").
+%% While it implements the behaviour, uncommenting the line below
+%% would fail to compile unless I make ranch a dependency of
+%% chatterbox, which I don't plan on
+
 %%-behaviour(ranch_protocol).
 
 -export([
@@ -12,9 +15,10 @@ start_link(Ref, Socket, Transport, Opts) ->
     Pid = proc_lib:spawn_link(?MODULE, init, [Ref, Socket, Transport, Opts]),
     {ok, Pid}.
 
-init(Ref, Socket, T, _Opts) ->
+init(Ref, Socket, T, Opts) ->
     ok = ranch:accept_ack(Ref),
-    http2_connection:become({transport(T), Socket}).
+    Http2Settings = proplists:get_value(http2_settings, Opts, chatterbox:settings(server)),
+    http2_connection:become({transport(T), Socket}, Http2Settings).
 
 transport(ranch_ssl) ->
     ssl;
